@@ -1,123 +1,97 @@
 /*
+Open a new sketch file
+Goto File -> Preference -> Additional board manager URL:
+[paste this URL]
+http://arduino.esp8266.com/stable/package_esp8266com_index.json,https://dl.espressif.com/dl/package_esp32_index.json
+Install esp8266 on board manager.
+Tools -> board -> ESP8266 -> LONIN(WEMOS)D1 Mini(clone)
+Choose the COM port -> eg., COM5
 
 
-
+->sign_in to your sender email google account.
+->Goto Security -> Enable 2-step verification
+->In search bar enter "app_password" and click it.
+->create App Name,Eg., ESP_mail -> it shown 16_digit password "copy and paste the[sender_app_password]"
 */
 
-#include <WiFi.h>
-#include <WebServer.h>
-#include <ESP32_MailClient.h>  // Include ESP32 Mail Client Library (Install this via the Arduino Library Manager)
 
-const char *ap_ssid = "GenZonix";  // AP SSID
-const char *ap_password = "thanksforyoursupport";        // AP Password
+#include <ESP8266WiFi.h>
+#include <ESP_Mail_Client.h>
+//Ir_sensor_pin
+#define Ir_pin D5    //define the IR_sensor Pin connect to the D5 pin
 
-const int irSensorPin = 13;  // Example pin for IR sensor
 
-// WebServer on port 80
-WebServer server(80);
+#define WiFi_SSID "your wifi name"     //replace your wifi name
+#define WiFi_pwd "wifi password"    //replace your wifi password
+#define sender_mail "sender@gmail.com"    //replace your email address
+#define sender_app_password "elar krhu xwzs iezb" //follow the Gmail_Auth_steps/refer our project1 document.
+#define receiver_mail "receiver@gmail.com"    //replace the receiver mail address to get notification.
 
-// Variables to store form input
-String wifi_ssid = "";
-String wifi_password = "";
-String sender_email = "";
-String sender_password = "";
-String receiver_email = "";
 
-// SMTP Mail Setup (Use your SMTP provider or Gmail's)
-SMTPData smtpData;
+SMTPSession smtp;
 
-// Handle the root HTML form
-void handleRoot() {
-  String html = "<!DOCTYPE html><html><head><title>WiFi & Email Setup</title></head><body>";
-  html += "<h1>WiFi & Email Setup</h1>";
-  html += "<form action=\"/save\" method=\"post\">";
-  html += "WiFi Name (SSID): <input type=\"text\" name=\"ssid\"><br>";
-  html += "WiFi Password: <input type=\"password\" name=\"password\"><br>";
-  html += "Sender Email Address: <input type=\"email\" name=\"sender_email\"><br>";
-  html += "Sender Email Password: <input type=\"password\" name=\"sender_password\"><br>";
-  html += "Receiver Email Address: <input type=\"email\" name=\"receiver_email\"><br>";
-  html += "<input type=\"submit\" value=\"Submit\">";
-  html += "</form></body></html>";
-  server.send(200, "text/html", html);
-}
 
-// Handle form submission
-void handleSave() {
-  // Capture data from the form
-  wifi_ssid = server.arg("ssid");
-  wifi_password = server.arg("password");
-  sender_email = server.arg("sender_email");
-  sender_password = server.arg("sender_password");
-  receiver_email = server.arg("receiver_email");
-
-  // Respond to user
-  server.send(200, "text/html", "<h1>Configuration Saved! ESP32 is connecting to WiFi...</h1>");
-
-  // Connect to WiFi
-  WiFi.softAPdisconnect(true);
-  WiFi.begin(wifi_ssid.c_str(), wifi_password.c_str());
-
-  int count = 0;
-  while (WiFi.status() != WL_CONNECTED && count < 20) {
-    delay(500);
-    Serial.print(".");
-    count++;
-  }
-
-  if (WiFi.status() == WL_CONNECTED) {
+void setup() {
+    Serial.begin(115200);
+    pinMode(Ir_pin, INPUT);
+    WiFi.begin(WiFi_SSID, WiFi_pwd);
+    while (WiFi.status() != WL_CONNECTED) {
+      delay(500);
+      Serial.print(".");
+    }
     Serial.println("\nConnected to WiFi!");
     Serial.println("IP Address: " + WiFi.localIP().toString());
-  } else {
-    Serial.println("\nFailed to connect.");
-  }
+    sendMail();
 }
 
-// Function to send an email
-void sendEmail() {
-  smtpData.setLogin("smtp.gmail.com", 465, sender_email.c_str(), sender_password.c_str()); // Change to your SMTP server
-  smtpData.setSender("ESP32 Security", sender_email.c_str());
-  smtpData.setPriority("High");
-  smtpData.setSubject("Security Alert");
-  smtpData.setMessage("Movement detected!", false);
-  smtpData.addRecipient(receiver_email.c_str());
 
-  // Send the email
-  if (!MailClient.sendMail(smtpData)) {
+void loop() {
+  int sensor=digitalRead(Ir_pin);
+  if(sensor==1){
+    sendMail();
+    delay(10000);
+  }else{
+    Serial.println("All are safe...");
+  }
+  Serial.flush();
+}
+
+
+void sendMail(){
+  Session_Config config;
+  config.server.host_name = "smtp.gmail.com";
+  config.server.port = 587;
+  config.login.email = sender_mail;
+  config.login.password = sender_app_password;
+
+
+  SMTP_Message message;
+  // Set the message content
+  message.sender.name = "Motion Security Notification System...";
+  message.sender.email = sender_mail;
+  message.subject = "Security Alert";
+  message.addRecipient("Receiver", receiver_mail);
+  message.text.content = "Movement detected!";
+
+
+  // Set SMTP server settings
+  smtp.callback([](SMTP_Status status) {
+    Serial.println(status.info());
+  });
+
+
+   if (!smtp.connect(&config))
+  {
+    MailClient.printf("Connection error, Status Code: %d, Error Code: %d, Reason: %s\n", smtp.statusCode(), smtp.errorCode(), smtp.errorReason().c_str());
+    return;
+  }
+
+
+  if (!MailClient.sendMail(&smtp, &message)) {
     Serial.println("Error sending email, try again later.");
   } else {
     Serial.println("Email sent successfully!");
   }
 
-  smtpData.empty();  // Clear the message buffer to free memory
-}
 
-void setup() {
-  Serial.begin(115200);
-
-  // Set IR sensor pin as input
-  pinMode(irSensorPin, INPUT);
-
-  // Start ESP32 as an access point
-  WiFi.softAP(ap_ssid, ap_password);
-
-  // Start the web server
-  server.on("/", handleRoot);   // Serve the root page
-  server.on("/save", handleSave);  // Handle form submissions
-  server.begin();
-  Serial.println("HTTP server started");
-
-  // Print AP IP
-  Serial.print("AP IP address: ");
-  Serial.println(WiFi.softAPIP());
-}
-
-void loop() {
-  server.handleClient();  // Handle web server requests
-
-  // Check if IR sensor is triggered
-  if (digitalRead(irSensorPin) == HIGH) {
-    Serial.println("Movement detected!");
-    sendEmail();  // Send email alert when motion is detected
-    delay(10000);  // Delay to prevent sending too many emails
-  }
 }
